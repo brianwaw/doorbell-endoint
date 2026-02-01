@@ -1,0 +1,82 @@
+services:
+  web:
+    build: .
+    container_name: sovereign_web
+    restart: unless-stopped
+    expose:
+      - 8000
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+
+  db:
+    image: postgres:15-alpine
+    container_name: sovereign_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - 5432
+
+  # NEW: Image endpoint service
+  img-endpoint:
+    build: 
+      context: /root/projects/img-endpoint
+      dockerfile: Dockerfile
+    container_name: img_endpoint_service
+    restart: unless-stopped
+    expose:
+      - 8000
+    env_file:
+      - /root/projects/img-endpoint/.env
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+
+  nginx:
+    image: nginx:alpine
+    container_name: sovereign_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certbot_certs:/etc/letsencrypt  # <-- Changed from named volume
+      - ./certbot_data:/var/lib/certbot
+    depends_on:
+      - web
+      - img-endpoint
+
+# Certbot is run separately when needed for SSL certificates
+#    certbot:
+#      image: certbot/certbot
+#      container_name: sovereign_certbot
+#      volumes:
+#        - static_volume:/app/staticfiles
+#        - media_volume:/app/media
+#        - certbot_certs:/etc/letsencrypt
+#        - certbot_data:/var/lib/certbot
+#        - nginx_secrets:/etc/nginx/ssl
+#      command: certonly --webroot --webroot-path=/var/lib/certbot --email ${ADMIN_EMAIL} --agree-tos --no-eff-email --staging -d ${DOMAIN_NAME}
+#      depends_on:
+#        - web
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+  nginx_secrets:
