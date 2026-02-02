@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 import numpy as np
 import cv2
@@ -35,11 +35,71 @@ async def root():
 
 @app.post("/doorbell/")
 async def receive_image_from_esp32(
-    image: UploadFile = File(...),
-    request: DoorbellRequest = None
+    request: Request  # Changed to receive raw body
 ):
     """
     Receive image from ESP32-CAM, convert from YUV422 to JPEG, and send to Telegram
+    """
+    try:
+        # Read raw body from request
+        contents = await request.body()
+
+        # Validate the image format
+        is_valid, format_type = validate_image_format(contents)
+
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"Invalid image format: {format_type}")
+
+        # Process based on detected format
+        if format_type == "RAW_YUV422":
+            # Convert YUV422 to RGB
+            rgb_image = convert_yuv422_to_rgb(contents)
+        else:
+            # Handle standard image formats (JPEG, PNG, etc.)
+            nparr = np.frombuffer(contents, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if img is None:
+                raise ValueError("Could not decode image from provided data")
+
+            # Convert BGR to RGB
+            rgb_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        # Convert RGB image to JPEG
+        jpeg_bytes = convert_to_jpeg(rgb_image, quality=85)
+
+        # Send to Telegram
+        message = "There is someone at the door!"
+        chat_id = TELEGRAM_CHAT_ID
+
+        if not TELEGRAM_BOT_TOKEN:
+            raise HTTPException(status_code=500, detail="Telegram bot token not configured")
+
+        if not chat_id:
+            raise HTTPException(status_code=500, detail="Telegram chat ID not configured")
+
+        success = await send_to_telegram(jpeg_bytes, message, chat_id)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to send image to Telegram")
+
+        logger.info(f"Image processed and sent to Telegram successfully for chat_id: {chat_id}")
+
+        return {"status": "success", "message": "Image received, processed, and sent to Telegram"}
+
+    except Exception as e:
+        logger.error(f"Error processing image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+# Also keep the original file upload endpoint for compatibility
+@app.post("/doorbell/upload/")
+async def receive_image_upload(
+    image: UploadFile = File(...),
+    request_data: DoorbellRequest = None
+):
+    """
+    Receive image from ESP32-CAM as file upload, convert from YUV422 to JPEG, and send to Telegram
     """
     try:
         # Read the uploaded image
@@ -70,8 +130,8 @@ async def receive_image_from_esp32(
         jpeg_bytes = convert_to_jpeg(rgb_image, quality=85)
 
         # Send to Telegram
-        message = request.message if request else "There is someone at the door!"
-        chat_id = request.chat_id if request and request.chat_id else TELEGRAM_CHAT_ID
+        message = request_data.message if request_data else "There is someone at the door!"
+        chat_id = request_data.chat_id if request_data and request_data.chat_id else TELEGRAM_CHAT_ID
 
         if not TELEGRAM_BOT_TOKEN:
             raise HTTPException(status_code=500, detail="Telegram bot token not configured")

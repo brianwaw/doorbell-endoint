@@ -1,0 +1,65 @@
+// ESP32-CAM to Telegram Doorbell - HTTP Endpoint Code Snippet
+//
+// Place this code after capturing an image with your ESP32-CAM
+// This sends the captured image to your server endpoint using HTTP (no SSL)
+
+void sendImageToServer(camera_fb_t * fb) {
+  if(WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    
+    // Use your server's IP address with HTTP (no SSL - more reliable for ESP32)
+    String serverPath = "http://85.208.48.131/doorbell/";  // Using HTTP instead of HTTPS
+    
+    http.begin(serverPath.c_str());
+    http.addHeader("Content-Type", "application/octet-stream");
+    http.setTimeout(15000); // 15 second timeout
+    
+    // Send the raw image data
+    int httpResponseCode = http.POST(fb->buf, fb->len);
+    
+    if(httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println("HTTP Response code: " + String(httpResponseCode));
+      Serial.println("Response: " + response);
+      
+      if(httpResponseCode == 200) {
+        Serial.println("✅ Image successfully sent to server and forwarded to Telegram!");
+      } else {
+        Serial.println("❌ Server responded with error code: " + String(httpResponseCode));
+      }
+    } else {
+      Serial.print("❌ Error on sending POST request: ");
+      Serial.println(httpResponseCode);
+      Serial.println("Error details: " + http.errorToString(httpResponseCode).c_str());
+    }
+    
+    http.end();
+  } else {
+    Serial.println("❌ WiFi not connected");
+  }
+}
+
+// Example usage in your main loop or motion detection function:
+void loop() {
+  // ... your motion detection or timer code ...
+  
+  if (motionDetected || timerExpired) {  // Replace with your actual trigger condition
+    // Capture image
+    camera_fb_t * fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("❌ Camera capture failed");
+      return;
+    }
+
+    Serial.println("📸 Captured image, sending to server...");
+    
+    // Send image to server
+    sendImageToServer(fb);
+    
+    // Return the frame buffer back to the driver for reuse
+    esp_camera_fb_return(fb);
+    
+    // Wait before next capture (adjust as needed)
+    delay(10000); // 10 seconds
+  }
+}
